@@ -2,6 +2,7 @@ use itertools::iproduct;
 use itertools::Itertools;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::mem::discriminant;
 use text_io::scan;
 
 #[derive(Debug, Default, Hash, Clone)]
@@ -11,14 +12,6 @@ struct Tile {
     borders: [String; 4],
     orientation: u8,
 }
-
-// impl PartialEq for Tile {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.number == other.number
-//     }
-// }
-
-// impl Eq for Tile {}
 
 #[derive(Debug, Default, Copy, Clone)]
 struct Aligns {
@@ -113,7 +106,7 @@ impl Tile {
                 roatated.orientation = self.orientation + 3;
             }
             0 => {
-                roatated.orientation = 0;
+                roatated.orientation = self.orientation;
             }
             _ => unimplemented!(),
         }
@@ -132,7 +125,7 @@ impl Tile {
                 for (i, j) in iproduct!(0..=side, 0..=side) {
                     roatated.pixels[i][j] = self.pixels[side - j][i];
                 }
-                roatated.orientation = self.orientation + 1;
+                roatated.orientation = self.orientation + 3;
             }
             180 => {
                 for (i, j) in iproduct!(0..=side, 0..=side) {
@@ -144,7 +137,7 @@ impl Tile {
                 for (i, j) in iproduct!(0..=side, 0..=side) {
                     roatated.pixels[i][j] = self.pixels[j][side - i];
                 }
-                roatated.orientation = self.orientation + 3;
+                roatated.orientation = self.orientation + 1;
             }
             0 => {
                 roatated.orientation = self.orientation;
@@ -212,7 +205,7 @@ fn insert_into_image(image: &mut Vec<Vec<char>>, coord: (usize, usize), tile: &T
     let pixels = &tile.pixels;
     for i in 0..10 {
         for j in 0..10 {
-            image[coord.0 * 10 + i][coord.1 * 10 + j] = pixels[i][j];
+            image[coord.0 * 10 + j][coord.1 * 10 + i] = pixels[i][j];
         }
     }
 }
@@ -229,15 +222,35 @@ fn get_tile(number: u64, tiles: &Vec<Tile>) -> &Tile {
     tiles.iter().find(|tile| tile.number == number).unwrap()
 }
 
+#[derive(PartialEq, Eq)]
+enum RelativePosition {
+    Above(isize, isize),
+    Below(isize, isize),
+    Left(isize, isize),
+    Right(isize, isize),
+}
+
 // This should ideally be a look-up table.
-fn get_aligning_orentation(fixed: &Tile, tiles: &Vec<Tile>, adjacent: u64, right: bool) -> Tile {
+fn get_aligning_orentation(
+    fixed: &Tile,
+    tiles: &Vec<Tile>,
+    adjacent: u64,
+    pos: &RelativePosition,
+) -> Tile {
     let reversed = |b: &str| b.chars().rev().collect::<String>();
     for i in 0..=7 {
         let mut tile = get_tile(adjacent, tiles).clone();
         let option = get_orientation(i, &mut tile);
-        if right && fixed.borders[1].eq(&reversed(&option.borders[3])) {
-            return option.clone();
-        } else if !right && fixed.borders[2].eq(&reversed(&option.borders[0])) {
+
+        if (discriminant(&pos) == discriminant(&&RelativePosition::Right(0, 0))
+            && fixed.borders[1].eq(&reversed(&option.borders[3])))
+            || (discriminant(&pos) == discriminant(&&RelativePosition::Below(0, 0))
+                && fixed.borders[2].eq(&reversed(&option.borders[0])))
+            || (discriminant(&pos) == discriminant(&&RelativePosition::Left(0, 0))
+                && fixed.borders[3].eq(&reversed(&option.borders[1])))
+            || (discriminant(&pos) == discriminant(&&RelativePosition::Above(0, 0))
+                && fixed.borders[0].eq(&reversed(&option.borders[2])))
+        {
             return option.clone();
         }
     }
@@ -245,39 +258,60 @@ fn get_aligning_orentation(fixed: &Tile, tiles: &Vec<Tile>, adjacent: u64, right
 }
 
 fn process_tile_adjacents<'a>(
-    oriented: &Tile,
+    processing_queue: &mut VecDeque<Tile>,
     tiles: &Vec<Tile>,
     adjacency: &'a HashMap<u64, Vec<Aligns>>,
     mut image: &mut Vec<Vec<char>>,
-    inserted: &mut std::collections::HashMap<&'a u64, ((usize, usize), Tile)>,
+    inserted: &mut std::collections::HashMap<u64, ((usize, usize), Tile)>,
 ) {
-    adjacency[&oriented.number].iter().for_each(|adjacent| {
+    let oriented = processing_queue.pop_front().unwrap();
+    for i in 0..adjacency[&oriented.number].len() {
+        let adjacent = adjacency[&oriented.number][i];
         // could have done with filter, but fighting the borrow checker is left for another day
         if inserted.get(&adjacent.tile).is_some() {
-            return;
+            continue;
         }
         let inserted_orientation = inserted[&oriented.number].1.orientation;
-        let is_to_right = match (inserted_orientation, adjacent.edge) {
-            (0, 1) | (1, 0) | (2, 3) | (3, 2) | (4, 1) | (5, 0) | (6, 3) | (7, 2) => true,
-            (0, 2) | (1, 1) | (2, 0) | (3, 3) | (4, 0) | (5, 3) | (6, 2) | (7, 1) => false,
+        let rel_pos = match (inserted_orientation, adjacent.edge) {
+            (0, 1) | (1, 0) | (2, 3) | (3, 2) | (4, 1) | (5, 0) | (6, 3) | (7, 2) => {
+                RelativePosition::Right(1, 0)
+            }
+            (0, 2) | (1, 1) | (2, 0) | (3, 3) | (4, 0) | (5, 3) | (6, 2) | (7, 1) => {
+                RelativePosition::Below(0, 1)
+            }
+            (0, 3) | (1, 2) | (2, 1) | (3, 0) | (4, 3) | (5, 2) | (6, 1) | (7, 0) => {
+                RelativePosition::Left(-1, 0)
+            }
+            (0, 0) | (1, 3) | (2, 2) | (3, 1) | (4, 2) | (5, 1) | (6, 0) | (7, 3) => {
+                RelativePosition::Above(0, -1)
+            }
             _ => unimplemented!(),
         };
         let aligning_orentation =
-            get_aligning_orentation(&oriented, &tiles, adjacent.tile, is_to_right).clone();
+            get_aligning_orentation(&oriented, &tiles, adjacent.tile, &rel_pos).clone();
         println!(
-            "adjacent {:?} aligns to {:?}",
-            adjacent, aligning_orentation.orientation
+            "orientation {:?} adjacent {:?} aligns to {:?}",
+            inserted[&oriented.number].1.orientation, adjacent, aligning_orentation.orientation
         );
-        let mut loc = inserted[&oriented.number].0;
-        if is_to_right {
-            loc.1 += 1;
-            insert_into_image(&mut image, loc, &aligning_orentation);
-        } else {
-            loc.0 += 1;
-            insert_into_image(&mut image, loc, &aligning_orentation);
+        let loc = inserted[&oriented.number].0;
+        println!("relative to {:?}", loc);
+        let destination_loc;
+        match rel_pos {
+            RelativePosition::Above(i, j)
+            | RelativePosition::Below(i, j)
+            | RelativePosition::Left(i, j)
+            | RelativePosition::Right(i, j) => {
+                destination_loc = ((loc.0 as isize + i) as usize, (loc.1 as isize + j) as usize)
+            }
         }
-        let _ = inserted.insert(&adjacent.tile, (loc, aligning_orentation.clone()));
-    });
+        println!("inserting at {:?}", destination_loc);
+        insert_into_image(&mut image, destination_loc, &aligning_orentation);
+        let _ = inserted.insert(
+            adjacent.tile,
+            (destination_loc, aligning_orentation.clone()),
+        );
+        processing_queue.push_back(aligning_orentation);
+    }
 }
 
 fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
@@ -304,16 +338,17 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
     };
     // pixel_print(&oriented.pixels);
 
-    let mut inserted: HashMap<&u64, ((usize, usize), Tile)> = HashMap::new();
+    let mut inserted: HashMap<u64, ((usize, usize), Tile)> = HashMap::new();
 
     let coord = (0, 0);
+    println!("inserting {:?} at {:?}", oriented.number, coord);
     insert_into_image(&mut image, coord, &oriented);
-    let _ignore = inserted.insert(&oriented.number, (coord, oriented.clone()));
+    let _ignore = inserted.insert(oriented.number, (coord, oriented.clone()));
     let mut processing_queue = VecDeque::new();
-    processing_queue.push_back(&oriented);
+    processing_queue.push_back(oriented.clone());
     while processing_queue.len() > 0 {
         process_tile_adjacents(
-            &processing_queue.pop_front().unwrap(),
+            &mut processing_queue,
             &tiles,
             adjacency,
             &mut image,
