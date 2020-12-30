@@ -3,7 +3,8 @@ use itertools::iproduct;
 use itertools::Itertools;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::mem::discriminant;
+// use std::fs::OpenOptions;
+// use std::io::Write;
 use text_io::scan;
 
 #[derive(Debug, Default, Hash, Clone)]
@@ -196,6 +197,7 @@ fn solve_1(tiles: &Vec<Tile>) -> HashMap<u64, Vec<Aligns>> {
     match_map
 }
 
+// retained for legacy
 fn pixel_print(pixels: &Vec<Vec<char>>) {
     pixels
         .iter()
@@ -231,7 +233,7 @@ enum RelativePosition {
     Right(isize, isize),
 }
 
-// This should ideally be a look-up table.
+// This is replaced by the look-up table. Retained for legacy.
 fn get_aligning_orentation(
     fixed: &Tile,
     tiles: &Vec<Tile>,
@@ -242,16 +244,13 @@ fn get_aligning_orentation(
     for i in 0..=7 {
         let mut tile = get_tile(adjacent, tiles).clone();
         let option = get_orientation(i, &mut tile);
-
-        if (discriminant(&pos) == discriminant(&&RelativePosition::Right(0, 0))
-            && fixed.borders[1].eq(&reversed(&option.borders[3])))
-            || (discriminant(&pos) == discriminant(&&RelativePosition::Below(0, 0))
-                && fixed.borders[2].eq(&reversed(&option.borders[0])))
-            || (discriminant(&pos) == discriminant(&&RelativePosition::Left(0, 0))
-                && fixed.borders[3].eq(&reversed(&option.borders[1])))
-            || (discriminant(&pos) == discriminant(&&RelativePosition::Above(0, 0))
-                && fixed.borders[0].eq(&reversed(&option.borders[2])))
-        {
+        let (edge, other) = match pos {
+            RelativePosition::Right(_, _) => (1, 3),
+            RelativePosition::Below(_, _) => (2, 0),
+            RelativePosition::Left(_, _) => (3, 1),
+            RelativePosition::Above(_, _) => (0, 2),
+        };
+        if fixed.borders[edge].eq(&reversed(&option.borders[other])) {
             return option.clone();
         }
     }
@@ -261,18 +260,18 @@ fn get_aligning_orentation(
 fn process_tile_adjacents<'a>(
     processing_queue: &mut VecDeque<Tile>,
     tiles: &Vec<Tile>,
+    alignment_map: &'a HashMap<(u8, usize, usize, bool), u8>,
     adjacency: &'a HashMap<u64, Vec<Aligns>>,
     mut image: &mut Vec<Vec<char>>,
-    inserted: &mut std::collections::HashMap<u64, ((usize, usize), Tile)>,
+    inserted: &mut std::collections::HashMap<u64, ((usize, usize), u8)>,
 ) {
     let oriented = processing_queue.pop_front().unwrap();
     for i in 0..adjacency[&oriented.number].len() {
         let adjacent = adjacency[&oriented.number][i];
-        // could have done with filter, but fighting the borrow checker is left for another day
         if inserted.get(&adjacent.tile).is_some() {
             continue;
         }
-        let inserted_orientation = inserted[&oriented.number].1.orientation;
+        let inserted_orientation = inserted[&oriented.number].1;
         let rel_pos = match (inserted_orientation, adjacent.edge) {
             (0, 1) | (1, 0) | (2, 3) | (3, 2) | (4, 1) | (5, 0) | (6, 3) | (7, 2) => {
                 RelativePosition::Right(1, 0)
@@ -288,14 +287,31 @@ fn process_tile_adjacents<'a>(
             }
             _ => unimplemented!(),
         };
-        let aligning_orentation =
-            get_aligning_orentation(&oriented, &tiles, adjacent.tile, &rel_pos).clone();
-        // println!(
-        //     "orientation {:?} adjacent {:?} aligns to {:?}",
-        //     inserted[&oriented.number].1.orientation, adjacent, aligning_orentation.orientation
-        // );
+        let key = (
+            inserted_orientation,
+            adjacent.edge,
+            adjacent.other,
+            adjacent.is_flipped,
+        );
+        let orientation = alignment_map[&key];
+        let mut tile = get_tile(adjacent.tile, tiles).clone();
+        let aligning_orentation = get_orientation(orientation, &mut tile);
+
+        // results of these are the the look-up table "alignment_map"
+        // (which should be made exhaustive)
+
+        // let aligning_orentation =
+        //     get_aligning_orentation(&oriented, &tiles, adjacent.tile, &rel_pos).clone();
+        // if alignment_map.get(&key).is_none() {
+        //     let mut file = OpenOptions::new()
+        //         .append(true)
+        //         .open("./alignment.txt")
+        //         .unwrap();
+        //     let _ = writeln!(file, "{:?} => {:?}", key, aligning_orentation.orientation);
+        // }
+        // println!("{:?} => {:?}", key, aligning_orentation.orientation);
+
         let loc = inserted[&oriented.number].0;
-        // println!("relative to {:?}", loc);
         let destination_loc;
         match rel_pos {
             RelativePosition::Above(i, j)
@@ -305,13 +321,12 @@ fn process_tile_adjacents<'a>(
                 destination_loc = ((loc.0 as isize + i) as usize, (loc.1 as isize + j) as usize)
             }
         }
-        // println!("inserting at {:?}", destination_loc);
         insert_into_image(&mut image, destination_loc, &aligning_orentation);
         let _ = inserted.insert(
             adjacent.tile,
-            (destination_loc, aligning_orentation.clone()),
+            (destination_loc, aligning_orentation.orientation),
         );
-        processing_queue.push_back(aligning_orentation);
+        processing_queue.push_back(aligning_orentation.clone());
     }
 }
 
@@ -354,8 +369,16 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
         .iter()
         .filter(|entry| entry.1.len() == 2)
         .collect::<Vec<(&u64, &Vec<Aligns>)>>();
-    // println!("{:?}", corners);
-    // println!("{:?}", adjacency);
+
+    let alignments = fs::read_to_string("./alignment.txt").unwrap();
+    let alignment_map = alignments
+        .split('\n')
+        .map(|line| {
+            let (orientation, from, to, is_flipped, res): (u8, usize, usize, bool, u8);
+            scan!(line.bytes() =>"({}, {}, {}, {}) => {}",orientation,from,to,is_flipped,res);
+            ((orientation, from, to, is_flipped), res)
+        })
+        .collect::<HashMap<(u8, usize, usize, bool), u8>>();
 
     // re-orient so that top left can be aligned with others
     let mut oriented = get_tile(*corners[0].0, &tiles).clone();
@@ -366,20 +389,21 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
         (2, 3) | (3, 2) => oriented.rotate_by_cw(270),
         _ => oriented.rotate_by_cw(0),
     };
-    // pixel_print(&oriented.pixels);
 
-    let mut inserted: HashMap<u64, ((usize, usize), Tile)> = HashMap::new();
-
+    //insert into main image
+    let mut inserted: HashMap<u64, ((usize, usize), u8)> = HashMap::new();
     let coord = (0, 0);
-    // println!("inserting {:?} at {:?}", oriented.number, coord);
     insert_into_image(&mut image, coord, &oriented);
-    let _ignore = inserted.insert(oriented.number, (coord, oriented.clone()));
+    let _ignore = inserted.insert(oriented.number, (coord, oriented.orientation));
+
+    // process the remaining.
     let mut processing_queue = VecDeque::new();
     processing_queue.push_back(oriented.clone());
     while processing_queue.len() > 0 {
         process_tile_adjacents(
             &mut processing_queue,
             &tiles,
+            &alignment_map,
             adjacency,
             &mut image,
             &mut inserted,
@@ -411,11 +435,12 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
     for i in 0..=7 {
         let mut reoriented = Tile::default();
         reoriented.pixels = extracted.clone();
-        let bla = get_orientation(i, &mut reoriented);
-        if search_for_monster(&mut bla.pixels, &monster) {
+        let attempt = get_orientation(i, &mut reoriented);
+        if search_for_monster(&mut attempt.pixels, &monster) {
             println!(
                 "roughness {:?}",
-                bla.pixels
+                attempt
+                    .pixels
                     .iter()
                     .flat_map(|row| row.iter())
                     .filter(|&c| c.eq(&'#'))
@@ -428,11 +453,8 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
 
 fn main() {
     let input = fs::read_to_string("./input_d20.txt").unwrap();
-    let tiles = input.split("\n\n").collect::<Vec<&str>>();
-    let parsed = tiles
-        .iter()
-        .map(|tile| parse_tile(tile))
-        .collect::<Vec<Tile>>();
+    let tiles = input.split("\n\n");
+    let parsed = tiles.map(|tile| parse_tile(tile)).collect::<Vec<Tile>>();
     let adjacency = solve_1(&parsed);
     solve_2(&parsed, &adjacency);
 }
