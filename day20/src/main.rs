@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use itertools::iproduct;
 use itertools::Itertools;
 use std::collections::{HashMap, VecDeque};
@@ -289,12 +290,12 @@ fn process_tile_adjacents<'a>(
         };
         let aligning_orentation =
             get_aligning_orentation(&oriented, &tiles, adjacent.tile, &rel_pos).clone();
-        println!(
-            "orientation {:?} adjacent {:?} aligns to {:?}",
-            inserted[&oriented.number].1.orientation, adjacent, aligning_orentation.orientation
-        );
+        // println!(
+        //     "orientation {:?} adjacent {:?} aligns to {:?}",
+        //     inserted[&oriented.number].1.orientation, adjacent, aligning_orentation.orientation
+        // );
         let loc = inserted[&oriented.number].0;
-        println!("relative to {:?}", loc);
+        // println!("relative to {:?}", loc);
         let destination_loc;
         match rel_pos {
             RelativePosition::Above(i, j)
@@ -304,7 +305,7 @@ fn process_tile_adjacents<'a>(
                 destination_loc = ((loc.0 as isize + i) as usize, (loc.1 as isize + j) as usize)
             }
         }
-        println!("inserting at {:?}", destination_loc);
+        // println!("inserting at {:?}", destination_loc);
         insert_into_image(&mut image, destination_loc, &aligning_orentation);
         let _ = inserted.insert(
             adjacent.tile,
@@ -312,6 +313,35 @@ fn process_tile_adjacents<'a>(
         );
         processing_queue.push_back(aligning_orentation);
     }
+}
+
+fn search_for_monster(extracted: &mut Vec<Vec<char>>, monster: &Vec<Vec<char>>) -> bool {
+    let mut res = false;
+    let m_offsets = monster
+        .iter()
+        .enumerate()
+        .flat_map(|(i, row)| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, &c)| c.eq(&'#'))
+                .map(move |(x, _)| (i, x))
+        })
+        .collect::<Vec<_>>();
+
+    for i in 0..(extracted.len() - monster.len()) {
+        for j in 0..(extracted[0].len() - monster[0].len()) {
+            if m_offsets
+                .iter()
+                .all(|(a, b)| extracted[i + a][j + b].eq(&'#'))
+            {
+                m_offsets
+                    .iter()
+                    .for_each(|(a, b)| extracted[i + a][j + b] = 'O');
+                res = true;
+            }
+        }
+    }
+    return res;
 }
 
 fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
@@ -341,7 +371,7 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
     let mut inserted: HashMap<u64, ((usize, usize), Tile)> = HashMap::new();
 
     let coord = (0, 0);
-    println!("inserting {:?} at {:?}", oriented.number, coord);
+    // println!("inserting {:?} at {:?}", oriented.number, coord);
     insert_into_image(&mut image, coord, &oriented);
     let _ignore = inserted.insert(oriented.number, (coord, oriented.clone()));
     let mut processing_queue = VecDeque::new();
@@ -355,7 +385,45 @@ fn solve_2(tiles: &Vec<Tile>, adjacency: &HashMap<u64, Vec<Aligns>>) {
             &mut inserted,
         );
     }
-    pixel_print(&image);
+    // pixel_print(&image);
+
+    let extracted = image
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 10 != 9 && i % 10 != 0)
+        .map(|(_, row)| {
+            row.iter()
+                .cloned()
+                .enumerate()
+                .filter(|(j, _)| j % 10 != 9 && j % 10 != 0)
+                .map(|(_, c)| c)
+                .collect::<Vec<char>>()
+        })
+        .collect::<Vec<Vec<char>>>();
+    // pixel_print(&extracted);
+
+    let m_in = fs::read_to_string("./monster.txt").unwrap();
+    let monster = m_in
+        .split('\n')
+        .map(|l| l.chars().collect())
+        .collect::<Vec<Vec<char>>>();
+
+    for i in 0..=7 {
+        let mut reoriented = Tile::default();
+        reoriented.pixels = extracted.clone();
+        let bla = get_orientation(i, &mut reoriented);
+        if search_for_monster(&mut bla.pixels, &monster) {
+            println!(
+                "roughness {:?}",
+                bla.pixels
+                    .iter()
+                    .flat_map(|row| row.iter())
+                    .filter(|&c| c.eq(&'#'))
+                    .count()
+            );
+            break;
+        }
+    }
 }
 
 fn main() {
