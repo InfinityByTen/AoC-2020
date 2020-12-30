@@ -63,7 +63,7 @@ The fipped version of orientation #0 is thus:
 
 Notice the reversal of the 's' and 'e' in the above. This is denoted as orientation #4. Orientations #5 through #7 can be achieved by likewise rotating orientation #4, **however**, for this, the rotations are done in ccw manner.
 
-To create the bigger image, we start with a corner as suggested by u/aardvark1231 in the thread. We find the orientation we inserted it into the main image. Now we look at the adjaceny which has the list of all adjacent edges tiles along  with the "alignment", called the `Aligns` in the code, we have a tuple:
+To create the bigger image, we start with a corner as suggested by u/trevorsg in the thread. We find the orientation we inserted it into the main image. Now we look at the adjaceny which has the list of all adjacent edges tiles along  with the "alignment", called the `Aligns` in the code, we have a tuple:
 
 1. The orientation of the inserted til      e.
 2. Its edge that       aligns with
